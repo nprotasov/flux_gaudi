@@ -13,6 +13,9 @@ from flux.sampling import denoise, get_noise, get_schedule, prepare, unpack
 from flux.util import (configs, embed_watermark, load_ae, load_clip,
                        load_flow_model, load_t5)
 from transformers import pipeline
+import habana_frameworks.torch.hpu
+import habana_frameworks.torch.core as htcore
+#import habana_frameworks.torch.gpu_migration
 
 NSFW_THRESHOLD = 0.85
 
@@ -135,6 +138,8 @@ def main(
         available = ", ".join(configs.keys())
         raise ValueError(f"Got unknown model name: {name}, chose from {available}")
 
+    device="hpu"
+
     torch_device = torch.device(device)
     if num_steps is None:
         num_steps = 4 if name == "flux-schnell" else 50
@@ -148,17 +153,14 @@ def main(
         os.makedirs(output_dir)
         idx = 0
     else:
-        fns = [fn for fn in iglob(output_name.format(idx="*")) if re.search(r"img_[0-9]\.jpg$", fn)]
-        if len(fns) > 0:
-            idx = max(int(fn.split("_")[-1].split(".")[0]) for fn in fns) + 1
-        else:
-            idx = 0
+        idx = len([name for name in os.listdir(output_dir) if os.path.isfile(name)]) + 1
 
     # init all components
     t5 = load_t5(torch_device, max_length=256 if name == "flux-schnell" else 512)
     clip = load_clip(torch_device)
     model = load_flow_model(name, device="cpu" if offload else torch_device)
     ae = load_ae(name, device="cpu" if offload else torch_device)
+    ae = ae.to("hpu", dtype = torch.bfloat16)
 
     rng = torch.Generator(device="cpu")
     opts = SamplingOptions(
@@ -188,6 +190,8 @@ def main(
             dtype=torch.bfloat16,
             seed=opts.seed,
         )
+
+        print("After gent noise")
         opts.seed = None
         if offload:
             ae = ae.cpu()
@@ -196,14 +200,24 @@ def main(
         inp = prepare(t5, clip, x, prompt=opts.prompt)
         timesteps = get_schedule(opts.num_steps, inp["img"].shape[1], shift=(name != "flux-schnell"))
 
+        print("After prepare")
+
+        htcore.mark_step()
+
         # offload TEs to CPU, load model to gpu
         if offload:
             t5, clip = t5.cpu(), clip.cpu()
             torch.cuda.empty_cache()
             model = model.to(torch_device)
 
+        print("Before denoise")
+
         # denoise initial noise
         x = denoise(model, **inp, timesteps=timesteps, guidance=opts.guidance)
+
+        print("After denoise")
+
+        htcore.mark_step()
 
         # offload model, load autoencoder to gpu
         if offload:
@@ -212,10 +226,15 @@ def main(
             ae.decoder.to(x.device)
 
         # decode latents to pixel space
-        x = unpack(x.float(), opts.height, opts.width)
+        x = unpack(x.bfloat16(), opts.height, opts.width)
         with torch.autocast(device_type=torch_device.type, dtype=torch.bfloat16):
+            x = x.to(dtype=torch.bfloat16)
             x = ae.decode(x)
         t1 = time.perf_counter()
+
+        print("After decode")
+
+        htcore.mark_step()
 
         fn = output_name.format(idx=idx)
         print(f"Done in {t1 - t0:.1f}s. Saving {fn}")
@@ -244,6 +263,10 @@ def main(
             opts = parse_prompt(opts)
         else:
             opts = None
+
+        print("END")
+
+        htcore.mark_step()
 
 
 def app():

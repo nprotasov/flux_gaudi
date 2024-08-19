@@ -236,6 +236,7 @@ class Decoder(nn.Module):
 
     def forward(self, z: Tensor) -> Tensor:
         # z to block_in
+        z = z.to("hpu", dtype = torch.bfloat16)
         h = self.conv_in(z)
 
         # middle

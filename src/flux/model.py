@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 import torch
 from torch import Tensor, nn
+import habana_frameworks.torch.core as htcore
 
 from flux.modules.layers import (DoubleStreamBlock, EmbedND, LastLayer,
                                  MLPEmbedder, SingleStreamBlock,
@@ -89,23 +90,29 @@ class Flux(nn.Module):
 
         # running on sequences img
         img = self.img_in(img)
+        htcore.mark_step()
         vec = self.time_in(timestep_embedding(timesteps, 256))
         if self.params.guidance_embed:
             if guidance is None:
                 raise ValueError("Didn't get guidance strength for guidance distilled model.")
             vec = vec + self.guidance_in(timestep_embedding(guidance, 256))
+        htcore.mark_step()
         vec = vec + self.vector_in(y)
+        htcore.mark_step()
         txt = self.txt_in(txt)
-
+        htcore.mark_step()
         ids = torch.cat((txt_ids, img_ids), dim=1)
         pe = self.pe_embedder(ids)
+        htcore.mark_step()
 
         for block in self.double_blocks:
             img, txt = block(img=img, txt=txt, vec=vec, pe=pe)
+            htcore.mark_step()
 
         img = torch.cat((txt, img), 1)
         for block in self.single_blocks:
             img = block(img, vec=vec, pe=pe)
+            htcore.mark_step()
         img = img[:, txt.shape[1] :, ...]
 
         img = self.final_layer(img, vec)  # (N, T, patch_size ** 2 * out_channels)

@@ -25,7 +25,7 @@ def get_noise(
         2 * math.ceil(width / 16),
         device=device,
         dtype=dtype,
-        generator=torch.Generator(device=device).manual_seed(seed),
+        generator=torch.Generator(device="cpu").manual_seed(seed),
     )
 
 
