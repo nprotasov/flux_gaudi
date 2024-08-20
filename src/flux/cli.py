@@ -15,6 +15,7 @@ from flux.util import (configs, embed_watermark, load_ae, load_clip,
 from transformers import pipeline
 import habana_frameworks.torch.hpu
 import habana_frameworks.torch.core as htcore
+import habana_frameworks.torch as ht
 #import habana_frameworks.torch.gpu_migration
 
 NSFW_THRESHOLD = 0.85
@@ -159,6 +160,7 @@ def main(
     t5 = load_t5(torch_device, max_length=256 if name == "flux-schnell" else 512)
     clip = load_clip(torch_device)
     model = load_flow_model(name, device="cpu" if offload else torch_device)
+    model = ht.hpu.wrap_in_hpu_graph(model, disable_tensor_cache=True)
     ae = load_ae(name, device="cpu" if offload else torch_device)
     ae = ae.to("hpu", dtype = torch.bfloat16)
 
@@ -202,7 +204,7 @@ def main(
 
         print("After prepare")
 
-        htcore.mark_step()
+        #htcore.mark_step()
 
         # offload TEs to CPU, load model to gpu
         if offload:
@@ -217,7 +219,7 @@ def main(
 
         print("After denoise")
 
-        htcore.mark_step()
+        #htcore.mark_step()
 
         # offload model, load autoencoder to gpu
         if offload:
@@ -234,7 +236,7 @@ def main(
 
         print("After decode")
 
-        htcore.mark_step()
+        #htcore.mark_step()
 
         fn = output_name.format(idx=idx)
         print(f"Done in {t1 - t0:.1f}s. Saving {fn}")
@@ -266,7 +268,7 @@ def main(
 
         print("END")
 
-        htcore.mark_step()
+        #htcore.mark_step()
 
 
 def app():
