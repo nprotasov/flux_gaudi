@@ -229,7 +229,7 @@ def main(
 
         # decode latents to pixel space
         x = unpack(x.bfloat16(), opts.height, opts.width)
-        with torch.autocast(device_type=torch_device.type, dtype=torch.bfloat16):
+        with torch.autocast(device_type=torch_device.type, dtype=torch.bfloat16, enabled=True):
             x = x.to(dtype=torch.bfloat16)
             x = ae.decode(x)
         t1 = time.perf_counter()
